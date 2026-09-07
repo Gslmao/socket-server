@@ -3,6 +3,8 @@ import {
   createDisconnectHandler,
   createJoinRoomHandler,
   createLeaveRoomHandler,
+  createPlaceObjectHandler,
+  createRemoveObjectHandler,
   createRoomHandler,
   createStartMessageIntervalHandler,
   createStopMessageIntervalHandler,
@@ -12,7 +14,7 @@ const io = new Server(process.env.PORT || 6969, {
   cors: { origin: "*" }
 });
 
-// roomCode -> { host: socketId, guest: socketId|null, createdAt: number }
+// roomCode -> { host: socketId, guest: socketId|null, createdAt: number, objects: Map }
 const rooms = new Map();
 // socketId -> roomCode
 const socketToRoom = new Map();
@@ -24,6 +26,8 @@ io.on("connection", (socket) => {
   const joinRoom = createJoinRoomHandler(io, rooms, socket, socketToRoom);
   const leaveRoom = createLeaveRoomHandler(rooms, socket, socketToRoom);
   const disconnect = createDisconnectHandler(rooms, socket, socketToRoom);
+  const placeObject = createPlaceObjectHandler(io, rooms, socket);
+  const removeObject = createRemoveObjectHandler(io, rooms, socket);
 
   socket.on("start-message-interval", startMessageInterval);
   socket.on("stop-message-interval", stopMessageInterval);
@@ -31,6 +35,8 @@ io.on("connection", (socket) => {
   socket.on("join-room", joinRoom);
   socket.on("leave-room", leaveRoom);
   socket.on("disconnect", disconnect);
+  socket.on("place-object", placeObject);
+  socket.on("remove-object", removeObject);
 });
 
 console.log("Socket.io server running");

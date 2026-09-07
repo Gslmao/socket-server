@@ -52,6 +52,8 @@ export function createRoomHandler(socket, rooms, socketToRoom) {
       createdAt: Date.now(),
       messageInterval: null,
       messageCount: 0,
+      // objectId -> { position, quaternion, placedBy, placedAt }
+      objects: new Map(),
     });
     socketToRoom.set(socket.id, code);
 
@@ -63,7 +65,7 @@ export function createRoomHandler(socket, rooms, socketToRoom) {
 }
 
 export function createJoinRoomHandler(io, rooms, socket, socketToRoom) {
-  return function joinRoom(code, isRef, callback) {
+  return function joinRoom(code, callback) {
     const room = rooms.get(code);
     const respond = typeof callback === "function" ? callback : () => {};
 
@@ -79,7 +81,15 @@ export function createJoinRoomHandler(io, rooms, socket, socketToRoom) {
     socket.data.room = code;
     socket.data.role = "guest";
 
-    respond({ code });
+    // Send existing placed objects so a guest joining after objects
+    // already exist doesn't have to wait for the next placement to
+    // see anything.
+    const objects = [...room.objects.entries()].map(([objectId, record]) => ({
+      objectId,
+      ...record,
+    }));
+
+    respond({ code, objects });
     io.to(code).emit("match-found", { code });
   };
 }
@@ -110,5 +120,87 @@ export function createDisconnectHandler(rooms, socket, socketToRoom) {
     }
     socketToRoom.delete(socket.id);
     console.log("disconnected:", socket.id);
+  };
+}
+
+// ---- Object placement relay ----
+// No game rules here (tic-tac-toe rules / assets are separate issues) —
+// this only relays "an object exists at this pose" between the two
+// clients in a room, keyed by a client-generated objectId.
+
+function isValidVector3(v) {
+  return (
+    v &&
+    typeof v.x === "number" &&
+    typeof v.y === "number" &&
+    typeof v.z === "number"
+  );
+}
+
+function isValidQuaternion(q) {
+  return (
+    q &&
+    typeof q.x === "number" &&
+    typeof q.y === "number" &&
+    typeof q.z === "number" &&
+    typeof q.w === "number"
+  );
+}
+
+export function createPlaceObjectHandler(io, rooms, socket) {
+  return function placeObject(payload, callback) {
+    const respond = typeof callback === "function" ? callback : () => {};
+    const { code, objectId, position, quaternion } = payload ?? {};
+
+    const room = rooms.get(code);
+
+    // Sender must actually be a member of the room they claim, and
+    // must have a role assigned by the server at join time — never
+    // trust a role the client sends itself.
+    if (!room || socket.data.room !== code || !socket.data.role) {
+      return respond({ error: "Not in this room" });
+    }
+
+    if (typeof objectId !== "string" || !objectId) {
+      return respond({ error: "Missing objectId" });
+    }
+
+    if (!isValidVector3(position) || !isValidQuaternion(quaternion)) {
+      return respond({ error: "Invalid position/quaternion" });
+    }
+
+    const record = {
+      position,
+      quaternion,
+      placedBy: socket.data.role, // "host" | "guest", from the server's own tracking
+      placedAt: Date.now(),
+    };
+
+    room.objects.set(objectId, record);
+
+    respond({ ok: true });
+    io.to(code).emit("object-placed", { objectId, ...record });
+  };
+}
+
+export function createRemoveObjectHandler(io, rooms, socket) {
+  return function re2moveObject(payload, callback) {
+    const respond = typeof callback === "function" ? callback : () => {};
+    const { code, objectId } = payload ?? {};
+
+    const room = rooms.get(code);
+
+    if (!room || socket.data.room !== code || !socket.data.role) {
+      return respond({ error: "Not in this room" });
+    }
+
+    if (!room.objects.has(objectId)) {
+      return respond({ error: "Object not found" });
+    }
+
+    room.objects.delete(objectId);
+
+    respond({ ok: true });
+    io.to(code).emit("object-removed", { objectId });
   };
 }
