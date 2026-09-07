@@ -9,6 +9,14 @@ const rooms = new Map();
 // socketId -> roomCode
 const socketToRoom = new Map();
 
+function stopRoomMessageInterval(code) {
+  const room = rooms.get(code);
+  if (!room) return;
+
+  clearInterval(room.messageInterval);
+  room.messageInterval = null;
+}
+
 function generateCode() {
   let code;
   do {
@@ -18,6 +26,24 @@ function generateCode() {
 }
 
 io.on("connection", (socket) => {
+  socket.on("start-message-interval", (code) => {
+    const room = rooms.get(code);
+    if (!room || !socket.rooms.has(code)) return;
+    if (room.messageInterval) return;
+
+    const intervalMs = 1000;
+    room.messageInterval = setInterval(() => {
+      io.to(code).emit("server-message", {
+        message: "Message from the server",
+        sentAt: room.messageCount++,
+      });
+    }, intervalMs);
+  });
+
+  socket.on("stop-message-interval", () => {
+    stopRoomMessageInterval(socket.data.room);
+  });
+
   socket.on("create-room", (callback) => {
     const existingRoom = socketToRoom.get(socket.id);
     if (existingRoom) {
@@ -29,7 +55,13 @@ io.on("connection", (socket) => {
 
     const code = generateCode();
     console.log(code, "created by", socket.id);
-    rooms.set(code, { host: socket.id, guest: null, createdAt: Date.now() });
+    rooms.set(code, {
+      host: socket.id,
+      guest: null,
+      createdAt: Date.now(),
+      messageInterval: null,
+      messageCount: 0,
+    });
     socketToRoom.set(socket.id, code);
 
     socket.join(code);
@@ -60,6 +92,7 @@ io.on("connection", (socket) => {
     const room = rooms.get(code);
     if (!room) return;
 
+    stopRoomMessageInterval(code);
     socket.leave(code);
     socket.to(code).emit("opponent-left");
     rooms.delete(code);
@@ -72,6 +105,7 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     const code = socket.data.room ?? socketToRoom.get(socket.id);
     if (code && rooms.has(code)) {
+      stopRoomMessageInterval(code);
       socket.to(code).emit("opponent-left");
       rooms.delete(code);
     }
