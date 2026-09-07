@@ -14,6 +14,14 @@ function generateCode(rooms) {
   return code;
 }
 
+function isCalibrationPoint(point) {
+  return (
+    point &&
+    Number.isFinite(point.x) &&
+    Number.isFinite(point.z)
+  );
+}
+
 export function createStartMessageIntervalHandler(io, rooms, socket) {
   return function startMessageInterval(code) {
     const room = rooms.get(code);
@@ -52,6 +60,7 @@ export function createRoomHandler(socket, rooms, socketToRoom) {
       createdAt: Date.now(),
       messageInterval: null,
       messageCount: 0,
+      calibrationPoints: null,
       // objectId -> { position, quaternion, placedBy, placedAt }
       objects: new Map(),
     });
@@ -90,7 +99,84 @@ export function createJoinRoomHandler(io, rooms, socket, socketToRoom) {
     }));
 
     respond({ code, objects });
+    if (room.calibrationPoints) {
+      socket.emit("host-calibration-points", {
+        points: room.calibrationPoints,
+      });
+    }
     io.to(code).emit("match-found", { code });
+  };
+}
+
+export function createHostCalibrationPointsHandler(io, rooms, socket) {
+  return function hostCalibrationPoints(payload, callback) {
+    const respond = typeof callback === "function" ? callback : () => {};
+    const { code, points } = payload ?? {};
+    const room = rooms.get(code);
+    const pointCount = Array.isArray(points) ? points.length : 0;
+
+    if (!room) {
+      console.warn("Rejected host calibration points", {
+        socketId: socket.id,
+        roomCode: code,
+        role: socket.data.role ?? null,
+        pointCount,
+        reason: "Room not found",
+      });
+      return respond({ error: "Room not found" });
+    }
+
+    if (socket.data.room !== code || !socket.rooms.has(code)) {
+      console.warn("Rejected host calibration points", {
+        socketId: socket.id,
+        roomCode: code,
+        role: socket.data.role ?? null,
+        pointCount,
+        reason: "Socket not in room",
+      });
+      return respond({ error: "Socket not in room" });
+    }
+
+    if (room.host !== socket.id || socket.data.role !== "host") {
+      console.warn("Rejected host calibration points", {
+        socketId: socket.id,
+        roomCode: code,
+        role: socket.data.role ?? null,
+        pointCount,
+        reason: "Sender is not host",
+      });
+      return respond({ error: "Sender is not host" });
+    }
+
+    if (
+      !Array.isArray(points) ||
+      points.length < 2 ||
+      !points.every(isCalibrationPoint)
+    ) {
+      console.warn("Rejected host calibration points", {
+        socketId: socket.id,
+        roomCode: code,
+        role: socket.data.role,
+        pointCount,
+        reason: "Invalid calibration points",
+      });
+      return respond({ error: "Invalid calibration points" });
+    }
+
+    room.calibrationPoints = points.map(({ x, z }) => ({ x, z }));
+    socket.to(code).emit("host-calibration-points", {
+      points: room.calibrationPoints,
+    });
+
+    console.log("Relayed host calibration points", {
+      socketId: socket.id,
+      roomCode: code,
+      role: socket.data.role,
+      pointCount: room.calibrationPoints.length,
+      relaySuccess: Boolean(room.guest),
+    });
+
+    respond({ ok: true });
   };
 }
 

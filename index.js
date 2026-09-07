@@ -1,6 +1,7 @@
 import { Server } from "socket.io";
 import {
   createDisconnectHandler,
+  createHostCalibrationPointsHandler,
   createJoinRoomHandler,
   createLeaveRoomHandler,
   createPlaceObjectHandler,
@@ -26,6 +27,7 @@ io.on("connection", (socket) => {
   const joinRoom = createJoinRoomHandler(io, rooms, socket, socketToRoom);
   const leaveRoom = createLeaveRoomHandler(rooms, socket, socketToRoom);
   const disconnect = createDisconnectHandler(rooms, socket, socketToRoom);
+  const hostCalibrationPoints = createHostCalibrationPointsHandler(io, rooms, socket);
   const placeObject = createPlaceObjectHandler(io, rooms, socket);
   const removeObject = createRemoveObjectHandler(io, rooms, socket);
 
@@ -35,6 +37,7 @@ io.on("connection", (socket) => {
   socket.on("join-room", joinRoom);
   socket.on("leave-room", leaveRoom);
   socket.on("disconnect", disconnect);
+  socket.on("host-calibration-points", hostCalibrationPoints);
   socket.on("place-object", placeObject);
   socket.on("remove-object", removeObject);
 });
