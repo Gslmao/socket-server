@@ -77,10 +77,27 @@ export function createJoinRoomHandler(io, rooms, socket, socketToRoom) {
   return function joinRoom(code, callback) {
     const room = rooms.get(code);
     const respond = typeof callback === "function" ? callback : () => {};
+    const logContext = {
+      socketId: socket.id,
+      roomCode: code,
+      role: socket.data.role ?? null,
+      payload: { code },
+      roomMembership: [...socket.rooms],
+    };
 
-    if (!room) return respond({ error: "Room not found" });
-    if (room.guest) return respond({ error: "Room full" });
+    if (!room) {
+      console.warn("Rejected join-room", { ...logContext, reason: "Room not found" });
+      return respond({ error: "Room not found" });
+    }
+    if (room.guest) {
+      console.warn("Rejected join-room", { ...logContext, reason: "Room full" });
+      return respond({ error: "Room full" });
+    }
     if (socketToRoom.has(socket.id)) {
+      console.warn("Rejected join-room", {
+        ...logContext,
+        reason: "Socket already belongs to a room",
+      });
       return respond({ error: "You already joined a room on this connection" });
     }
 
@@ -98,7 +115,18 @@ export function createJoinRoomHandler(io, rooms, socket, socketToRoom) {
       ...record,
     }));
 
-    respond({ code, objects });
+    const acknowledgement = {
+      code,
+      objects,
+      calibrationPoints: room.calibrationPoints,
+    };
+    console.log("Joined room", {
+      ...logContext,
+      role: socket.data.role,
+      roomMembership: [...socket.rooms],
+      acknowledgement,
+    });
+    respond(acknowledgement);
     if (room.calibrationPoints) {
       socket.emit("host-calibration-points", {
         points: room.calibrationPoints,
@@ -239,19 +267,43 @@ export function createPlaceObjectHandler(io, rooms, socket) {
     const { code, objectId, position, quaternion } = payload ?? {};
 
     const room = rooms.get(code);
+    const logContext = {
+      socketId: socket.id,
+      roomCode: code,
+      role: socket.data.role ?? null,
+      payload,
+      roomMembership: [...socket.rooms],
+    };
 
     // Sender must actually be a member of the room they claim, and
     // must have a role assigned by the server at join time — never
     // trust a role the client sends itself.
-    if (!room || socket.data.room !== code || !socket.data.role) {
+    if (
+      !room ||
+      socket.data.room !== code ||
+      !socket.rooms.has(code) ||
+      !socket.data.role
+    ) {
+      console.warn("Rejected place-object", {
+        ...logContext,
+        reason: "Socket not in room",
+      });
       return respond({ error: "Not in this room" });
     }
 
     if (typeof objectId !== "string" || !objectId) {
+      console.warn("Rejected place-object", {
+        ...logContext,
+        reason: "Missing objectId",
+      });
       return respond({ error: "Missing objectId" });
     }
 
     if (!isValidVector3(position) || !isValidQuaternion(quaternion)) {
+      console.warn("Rejected place-object", {
+        ...logContext,
+        reason: "Invalid position/quaternion",
+      });
       return respond({ error: "Invalid position/quaternion" });
     }
 
@@ -266,6 +318,12 @@ export function createPlaceObjectHandler(io, rooms, socket) {
 
     respond({ ok: true });
     io.to(code).emit("object-placed", { objectId, ...record });
+    console.log("Broadcast object-placed", {
+      ...logContext,
+      roomMembership: [...io.sockets.adapter.rooms.get(code) ?? []],
+      objectId,
+      relaySuccess: true,
+    });
   };
 }
 
